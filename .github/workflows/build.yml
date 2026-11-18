@@ -1,0 +1,1154 @@
+name: build
+on:
+  push:
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 21
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: 8.12
+      - name: Create project files
+        run: |
+          mkdir -p src/main/java/dev/legavisual/mixin src/main/resources/assets/legavisual/lang
+          cat > 'build.gradle' <<'LEGA_EOF'
+          plugins {
+              id 'fabric-loom' version '1.9-SNAPSHOT'
+              id 'maven-publish'
+          }
+
+          version = project.mod_version
+          group = project.maven_group
+
+          base {
+              archivesName = project.archives_base_name
+          }
+
+          repositories {
+          }
+
+          dependencies {
+              minecraft "com.mojang:minecraft:${project.minecraft_version}"
+              mappings "net.fabricmc:yarn:${project.yarn_mappings}:v2"
+              modImplementation "net.fabricmc:fabric-loader:${project.loader_version}"
+              modImplementation "net.fabricmc.fabric-api:fabric-api:${project.fabric_version}"
+          }
+
+          processResources {
+              inputs.property "version", project.version
+              filesMatching("fabric.mod.json") {
+                  expand "version": inputs.properties.version
+              }
+          }
+
+          tasks.withType(JavaCompile).configureEach {
+              it.options.release = 21
+          }
+
+          java {
+              sourceCompatibility = JavaVersion.VERSION_21
+              targetCompatibility = JavaVersion.VERSION_21
+          }
+          LEGA_EOF
+          cat > 'gradle.properties' <<'LEGA_EOF'
+          org.gradle.jvmargs=-Xmx2G
+          org.gradle.parallel=true
+
+          minecraft_version=1.21.4
+          yarn_mappings=1.21.4+build.8
+          loader_version=0.16.10
+          fabric_version=0.119.2+1.21.4
+
+          mod_version=1.0.0
+          maven_group=dev.legavisual
+          archives_base_name=legavisual
+          LEGA_EOF
+          cat > 'settings.gradle' <<'LEGA_EOF'
+          pluginManagement {
+              repositories {
+                  maven {
+                      name = 'Fabric'
+                      url = 'https://maven.fabricmc.net/'
+                  }
+                  mavenCentral()
+                  gradlePluginPortal()
+              }
+          }
+          LEGA_EOF
+          cat > 'src/main/resources/fabric.mod.json' <<'LEGA_EOF'
+          {
+            "schemaVersion": 1,
+            "id": "legavisual",
+            "version": "${version}",
+            "name": "Lega Visual",
+            "description": "Visual client mod: glass menu, HUD, crosshair, zoom, fullbright.",
+            "authors": ["Lega"],
+            "icon": "assets/legavisual/icon.png",
+            "license": "MIT",
+            "environment": "client",
+            "entrypoints": {
+              "client": ["dev.legavisual.LegaVisualClient"]
+            },
+            "mixins": ["legavisual.mixins.json"],
+            "depends": {
+              "fabricloader": ">=0.16.0",
+              "minecraft": "~1.21.4",
+              "java": ">=21",
+              "fabric-api": "*"
+            }
+          }
+          LEGA_EOF
+          cat > 'src/main/resources/legavisual.mixins.json' <<'LEGA_EOF'
+          {
+            "required": true,
+            "minVersion": "0.8",
+            "package": "dev.legavisual.mixin",
+            "compatibilityLevel": "JAVA_21",
+            "client": [
+              "GameRendererMixin",
+              "InGameHudMixin",
+              "InGameOverlayRendererMixin",
+              "PressableWidgetMixin"
+            ],
+            "injectors": {
+              "defaultRequire": 0
+            }
+          }
+          LEGA_EOF
+          cat > 'src/main/resources/assets/legavisual/lang/en_us.json' <<'LEGA_EOF'
+          {
+            "key.legavisual.menu": "Open menu",
+            "key.legavisual.zoom": "Zoom (hold)",
+            "key.legavisual.fullbright": "Toggle fullbright",
+            "category.legavisual": "Lega Visual"
+          }
+          LEGA_EOF
+          cat > 'src/main/resources/assets/legavisual/lang/ru_ru.json' <<'LEGA_EOF'
+          {
+            "key.legavisual.menu": "Открыть меню",
+            "key.legavisual.zoom": "Зум (удерживать)",
+            "key.legavisual.fullbright": "Полная яркость",
+            "category.legavisual": "Lega Visual"
+          }
+          LEGA_EOF
+          cat > 'src/main/java/dev/legavisual/LegaConfig.java' <<'LEGA_EOF'
+          package dev.legavisual;
+
+          import net.fabricmc.loader.api.FabricLoader;
+
+          import java.io.IOException;
+          import java.io.InputStream;
+          import java.io.OutputStream;
+          import java.nio.file.Files;
+          import java.nio.file.Path;
+          import java.util.Properties;
+
+          public final class LegaConfig {
+              public static final int[] PALETTE = {0xFF7C5CFF, 0xFF3FA9FF, 0xFF3DDC97, 0xFFFF6B9A, 0xFFFFB347, 0xFFFFFFFF};
+
+              public static boolean hud = true;
+              public static boolean showFps = true;
+              public static boolean showCoords = true;
+              public static boolean customCrosshair = true;
+              public static boolean hideFire = true;
+              public static boolean fullbright = false;
+              public static boolean glassButtons = true;
+              public static boolean themeScreens = true;
+              public static boolean dynamicFps = true;
+              public static int zoomLevel = 4;
+              public static int crosshairSize = 4;
+              public static int accent = 0;
+              public static int perfLevel = 0;
+              public static int autoFps = 0;
+              public static final int[] AUTO = {0, 60, 90, 120, 144, 165};
+
+              public static boolean zooming = false;
+              public static float zoomCurrent = 1.0f;
+
+              private LegaConfig() {
+              }
+
+              public static int cycleAuto(int dir) {
+                  int idx = 0;
+                  for (int i = 0; i < AUTO.length; i++) {
+                      if (AUTO[i] == autoFps) {
+                          idx = i;
+                      }
+                  }
+                  idx = Math.max(0, Math.min(AUTO.length - 1, idx + dir));
+                  return AUTO[idx];
+              }
+
+              public static int accent() {
+                  return PALETTE[Math.max(0, Math.min(PALETTE.length - 1, accent))];
+              }
+
+              private static Path file(String name) {
+                  return FabricLoader.getInstance().getConfigDir().resolve(name + ".properties");
+              }
+
+              public static void save(String name) {
+                  Properties p = new Properties();
+                  p.setProperty("hud", String.valueOf(hud));
+                  p.setProperty("showFps", String.valueOf(showFps));
+                  p.setProperty("showCoords", String.valueOf(showCoords));
+                  p.setProperty("customCrosshair", String.valueOf(customCrosshair));
+                  p.setProperty("hideFire", String.valueOf(hideFire));
+                  p.setProperty("fullbright", String.valueOf(fullbright));
+                  p.setProperty("glassButtons", String.valueOf(glassButtons));
+                  p.setProperty("themeScreens", String.valueOf(themeScreens));
+                  p.setProperty("dynamicFps", String.valueOf(dynamicFps));
+                  p.setProperty("zoomLevel", String.valueOf(zoomLevel));
+                  p.setProperty("crosshairSize", String.valueOf(crosshairSize));
+                  p.setProperty("accent", String.valueOf(accent));
+                  p.setProperty("perfLevel", String.valueOf(perfLevel));
+                  p.setProperty("autoFps", String.valueOf(autoFps));
+                  try (OutputStream out = Files.newOutputStream(file(name))) {
+                      p.store(out, "Lega Visual");
+                  } catch (IOException ignored) {
+                  }
+              }
+
+              public static boolean load(String name) {
+                  Path f = file(name);
+                  if (!Files.exists(f)) {
+                      return false;
+                  }
+                  Properties p = new Properties();
+                  try (InputStream in = Files.newInputStream(f)) {
+                      p.load(in);
+                  } catch (IOException e) {
+                      return false;
+                  }
+                  hud = bool(p, "hud", hud);
+                  showFps = bool(p, "showFps", showFps);
+                  showCoords = bool(p, "showCoords", showCoords);
+                  customCrosshair = bool(p, "customCrosshair", customCrosshair);
+                  hideFire = bool(p, "hideFire", hideFire);
+                  fullbright = bool(p, "fullbright", fullbright);
+                  glassButtons = bool(p, "glassButtons", glassButtons);
+                  themeScreens = bool(p, "themeScreens", themeScreens);
+                  dynamicFps = bool(p, "dynamicFps", dynamicFps);
+                  zoomLevel = num(p, "zoomLevel", zoomLevel, 2, 8);
+                  crosshairSize = num(p, "crosshairSize", crosshairSize, 2, 12);
+                  accent = num(p, "accent", accent, 0, PALETTE.length - 1);
+                  perfLevel = num(p, "perfLevel", perfLevel, 0, 2);
+                  autoFps = num(p, "autoFps", autoFps, 0, 240);
+                  return true;
+              }
+
+              private static boolean bool(Properties p, String key, boolean def) {
+                  return Boolean.parseBoolean(p.getProperty(key, String.valueOf(def)));
+              }
+
+              private static int num(Properties p, String key, int def, int min, int max) {
+                  try {
+                      int v = Integer.parseInt(p.getProperty(key, String.valueOf(def)).trim());
+                      return Math.max(min, Math.min(max, v));
+                  } catch (NumberFormatException e) {
+                      return def;
+                  }
+              }
+          }
+          LEGA_EOF
+          cat > 'src/main/java/dev/legavisual/GuiUtil.java' <<'LEGA_EOF'
+          package dev.legavisual;
+
+          import net.minecraft.client.font.TextRenderer;
+          import net.minecraft.client.gui.DrawContext;
+
+          public final class GuiUtil {
+              private static final int[][] INSETS = new int[16][];
+
+              private GuiUtil() {
+              }
+
+              private static int[] insets(int r) {
+                  int[] a = r < INSETS.length ? INSETS[r] : null;
+                  if (a == null) {
+                      a = new int[r];
+                      for (int i = 0; i < r; i++) {
+                          double dy = r - i - 0.5;
+                          a[i] = (int) Math.round(r - Math.sqrt(r * r - dy * dy));
+                      }
+                      if (r < INSETS.length) {
+                          INSETS[r] = a;
+                      }
+                  }
+                  return a;
+              }
+
+              public static void roundRect(DrawContext c, int x, int y, int w, int h, int r, int color) {
+                  if (w <= 0 || h <= 0) {
+                      return;
+                  }
+                  r = Math.max(0, Math.min(r, Math.min(w, h) / 2));
+                  if (r == 0) {
+                      c.fill(x, y, x + w, y + h, color);
+                      return;
+                  }
+                  c.fill(x, y + r, x + w, y + h - r, color);
+                  int[] ins = insets(r);
+                  for (int i = 0; i < r; i++) {
+                      int inset = ins[i];
+                      c.fill(x + inset, y + i, x + w - inset, y + i + 1, color);
+                      c.fill(x + inset, y + h - i - 1, x + w - inset, y + h - i, color);
+                  }
+              }
+
+              public static void glass(DrawContext c, int x, int y, int w, int h, int r) {
+                  roundRect(c, x - 1, y - 1, w + 2, h + 2, r + 1, 0x33FFFFFF);
+                  roundRect(c, x, y, w, h, r, 0x99141A2E);
+                  c.fill(x + r, y, x + w - r, y + 1, 0x66FFFFFF);
+              }
+
+              public static void toggle(DrawContext c, int x, int y, boolean on, int accent) {
+                  roundRect(c, x, y, 22, 10, 5, on ? accent : 0x66FFFFFF);
+                  int kx = on ? x + 13 : x + 1;
+                  roundRect(c, kx, y + 1, 8, 8, 4, 0xFFFFFFFF);
+              }
+
+              public static void button(DrawContext c, TextRenderer tr, String label, int x, int y, int w, int h, boolean hover) {
+                  roundRect(c, x, y, w, h, 4, hover ? 0x55FFFFFF : 0x2AFFFFFF);
+                  c.drawCenteredTextWithShadow(tr, label, x + w / 2, y + (h - 8) / 2, 0xFFFFFFFF);
+              }
+          }
+          LEGA_EOF
+          cat > 'src/main/java/dev/legavisual/LegaHud.java' <<'LEGA_EOF'
+          package dev.legavisual;
+
+          import net.minecraft.client.MinecraftClient;
+          import net.minecraft.client.font.TextRenderer;
+          import net.minecraft.client.gui.DrawContext;
+          import net.minecraft.client.render.RenderTickCounter;
+
+          public final class LegaHud {
+              private static int lastFps = -1;
+              private static String fpsText = "";
+              private static int fpsW;
+              private static int lastX = Integer.MIN_VALUE;
+              private static int lastY;
+              private static int lastZ;
+              private static String coordText = "";
+              private static int coordW;
+
+              private LegaHud() {
+              }
+
+              public static void render(DrawContext ctx, RenderTickCounter tick) {
+                  MinecraftClient mc = MinecraftClient.getInstance();
+                  if (mc.player == null || mc.options.hudHidden) {
+                      return;
+                  }
+
+                  if (LegaConfig.customCrosshair && mc.currentScreen == null && mc.options.getPerspective().isFirstPerson()) {
+                      drawCrosshair(ctx, mc);
+                  }
+                  if (!LegaConfig.hud) {
+                      return;
+                  }
+
+                  String l1 = null;
+                  String l2 = null;
+                  TextRenderer tr = mc.textRenderer;
+                  if (LegaConfig.showFps) {
+                      int fps = mc.getCurrentFps();
+                      if (fps != lastFps) {
+                          lastFps = fps;
+                          fpsText = "FPS  " + fps;
+                          fpsW = tr.getWidth(fpsText);
+                      }
+                      l1 = fpsText;
+                  }
+                  if (LegaConfig.showCoords) {
+                      int bx = mc.player.getBlockX();
+                      int by = mc.player.getBlockY();
+                      int bz = mc.player.getBlockZ();
+                      if (bx != lastX || by != lastY || bz != lastZ) {
+                          lastX = bx;
+                          lastY = by;
+                          lastZ = bz;
+                          coordText = "XYZ  " + bx + " " + by + " " + bz;
+                          coordW = tr.getWidth(coordText);
+                      }
+                      l2 = coordText;
+                  }
+                  int count = (l1 != null ? 1 : 0) + (l2 != null ? 1 : 0);
+                  if (count == 0) {
+                      return;
+                  }
+                  int w = Math.max(l1 != null ? fpsW : 0, l2 != null ? coordW : 0);
+                  int x = 6;
+                  int y = 6;
+                  int h = count * 11 + 5;
+                  GuiUtil.glass(ctx, x, y, w + 16, h, 5);
+                  GuiUtil.roundRect(ctx, x + 4, y + 4, 2, h - 8, 1, LegaConfig.accent());
+                  int row = 0;
+                  if (l1 != null) {
+                      ctx.drawTextWithShadow(tr, l1, x + 10, y + 4, 0xFFFFFFFF);
+                      row++;
+                  }
+                  if (l2 != null) {
+                      ctx.drawTextWithShadow(tr, l2, x + 10, y + 4 + row * 11, 0xFFFFFFFF);
+                  }
+              }
+
+              private static void drawCrosshair(DrawContext ctx, MinecraftClient mc) {
+                  int cx = mc.getWindow().getScaledWidth() / 2;
+                  int cy = mc.getWindow().getScaledHeight() / 2;
+                  int s = LegaConfig.crosshairSize;
+                  int gap = 2;
+                  int color = LegaConfig.accent();
+                  bar(ctx, cx - gap - s, cy, cx - gap, cy + 1, color);
+                  bar(ctx, cx + 1 + gap, cy, cx + 1 + gap + s, cy + 1, color);
+                  bar(ctx, cx, cy - gap - s, cx + 1, cy - gap, color);
+                  bar(ctx, cx, cy + 1 + gap, cx + 1, cy + 1 + gap + s, color);
+              }
+
+              private static void bar(DrawContext ctx, int x1, int y1, int x2, int y2, int color) {
+                  ctx.fill(x1 - 1, y1 - 1, x2 + 1, y2 + 1, 0x99000000);
+                  ctx.fill(x1, y1, x2, y2, color);
+              }
+          }
+          LEGA_EOF
+          cat > 'src/main/java/dev/legavisual/LegaPerf.java' <<'LEGA_EOF'
+          package dev.legavisual;
+
+          import net.fabricmc.loader.api.FabricLoader;
+          import net.minecraft.client.MinecraftClient;
+          import net.minecraft.client.option.CloudRenderMode;
+          import net.minecraft.client.option.GameOptions;
+          import net.minecraft.client.option.GraphicsMode;
+          import net.minecraft.client.option.ParticlesMode;
+
+          import java.io.InputStream;
+          import java.io.OutputStream;
+          import java.nio.file.Files;
+          import java.nio.file.Path;
+          import java.util.Properties;
+
+          public final class LegaPerf {
+              private static int timer = 0;
+              private static boolean throttled = false;
+              private static int savedMaxFps = 0;
+              private static final int BACKGROUND_FPS = 15;
+              private static long fpsSum = 0;
+              private static int samples = 0;
+
+              private LegaPerf() {
+              }
+
+              public static void setAuto(int fps) {
+                  LegaConfig.autoFps = fps;
+                  timer = 0;
+                  fpsSum = 0;
+                  samples = 0;
+                  if (fps > 0) {
+                      apply(2);
+                      try {
+                          MinecraftClient.getInstance().options.getViewDistance().setValue(8);
+                      } catch (Exception ignored) {
+                      }
+                  }
+              }
+
+              public static void autoTick(MinecraftClient mc) {
+                  if (LegaConfig.autoFps <= 0 || mc.world == null || mc.currentScreen != null) {
+                      return;
+                  }
+                  fpsSum += mc.getCurrentFps();
+                  samples++;
+                  timer++;
+                  if (timer < 60) {
+                      return;
+                  }
+                  int avg = (int) (fpsSum / Math.max(1, samples));
+                  timer = 0;
+                  fpsSum = 0;
+                  samples = 0;
+                  int target = LegaConfig.autoFps;
+                  try {
+                      int view = mc.options.getViewDistance().getValue();
+                      if (avg < target - 8 && view > 4) {
+                          mc.options.getViewDistance().setValue(view - 1);
+                      } else if (avg > target + 45 && view < 12) {
+                          mc.options.getViewDistance().setValue(view + 1);
+                      }
+                  } catch (Exception ignored) {
+                  }
+              }
+
+              /** Drops the frame cap while the window is in the background and restores it on focus. */
+              public static void focusTick(MinecraftClient mc) {
+                  if (mc.getWindow() == null) {
+                      return;
+                  }
+                  try {
+                      boolean focused = org.lwjgl.glfw.GLFW.glfwGetWindowAttrib(mc.getWindow().getHandle(),
+                              org.lwjgl.glfw.GLFW.GLFW_FOCUSED) != 0;
+                      if (LegaConfig.dynamicFps && !focused) {
+                          if (!throttled) {
+                              savedMaxFps = mc.options.getMaxFps().getValue();
+                              throttled = true;
+                          }
+                          if (mc.options.getMaxFps().getValue() != BACKGROUND_FPS) {
+                              mc.options.getMaxFps().setValue(BACKGROUND_FPS);
+                          }
+                      } else if (throttled) {
+                          mc.options.getMaxFps().setValue(savedMaxFps);
+                          throttled = false;
+                      }
+                  } catch (Exception ignored) {
+                      throttled = false;
+                  }
+              }
+
+              private static Path backupFile() {
+                  return FabricLoader.getInstance().getConfigDir().resolve("legavisual-perf-backup.properties");
+              }
+
+              /** level: 0 = off (restore), 1 = balanced, 2 = extreme */
+              public static boolean apply(int level) {
+                  try {
+                      throttled = false;
+                      GameOptions o = MinecraftClient.getInstance().options;
+                      if (level <= 0) {
+                          restore(o);
+                          LegaConfig.perfLevel = 0;
+                          o.write();
+                          return true;
+                      }
+                      if (!Files.exists(backupFile())) {
+                          backup(o);
+                      }
+                      boolean ex = level >= 2;
+                      LegaConfig.perfLevel = ex ? 2 : 1;
+                      o.getViewDistance().setValue(ex ? 6 : 10);
+                      o.getSimulationDistance().setValue(ex ? 5 : 8);
+                      o.getEntityDistanceScaling().setValue(ex ? 0.5 : 0.75);
+                      o.getParticles().setValue(ex ? ParticlesMode.MINIMAL : ParticlesMode.DECREASED);
+                      o.getGraphicsMode().setValue(GraphicsMode.FAST);
+                      o.getCloudRenderMode().setValue(CloudRenderMode.OFF);
+                      o.getEntityShadows().setValue(false);
+                      o.getBiomeBlendRadius().setValue(ex ? 0 : 1);
+                      o.getMipmapLevels().setValue(ex ? 0 : 2);
+                      o.getEnableVsync().setValue(false);
+                      o.getMaxFps().setValue(260);
+                      o.getBobView().setValue(false);
+                      o.write();
+                      return true;
+                  } catch (Exception e) {
+                      return false;
+                  }
+              }
+
+              private static void backup(GameOptions o) throws Exception {
+                  Properties p = new Properties();
+                  p.setProperty("view", String.valueOf(o.getViewDistance().getValue()));
+                  p.setProperty("sim", String.valueOf(o.getSimulationDistance().getValue()));
+                  p.setProperty("entity", String.valueOf(o.getEntityDistanceScaling().getValue()));
+                  p.setProperty("particles", o.getParticles().getValue().name());
+                  p.setProperty("graphics", o.getGraphicsMode().getValue().name());
+                  p.setProperty("clouds", o.getCloudRenderMode().getValue().name());
+                  p.setProperty("shadows", String.valueOf(o.getEntityShadows().getValue()));
+                  p.setProperty("blend", String.valueOf(o.getBiomeBlendRadius().getValue()));
+                  p.setProperty("mip", String.valueOf(o.getMipmapLevels().getValue()));
+                  p.setProperty("vsync", String.valueOf(o.getEnableVsync().getValue()));
+                  p.setProperty("maxfps", String.valueOf(o.getMaxFps().getValue()));
+                  p.setProperty("bob", String.valueOf(o.getBobView().getValue()));
+                  try (OutputStream out = Files.newOutputStream(backupFile())) {
+                      p.store(out, "Lega Visual - original video settings");
+                  }
+              }
+
+              private static void restore(GameOptions o) throws Exception {
+                  if (!Files.exists(backupFile())) {
+                      return;
+                  }
+                  Properties p = new Properties();
+                  try (InputStream in = Files.newInputStream(backupFile())) {
+                      p.load(in);
+                  }
+                  o.getViewDistance().setValue(Integer.parseInt(p.getProperty("view")));
+                  o.getSimulationDistance().setValue(Integer.parseInt(p.getProperty("sim")));
+                  o.getEntityDistanceScaling().setValue(Double.parseDouble(p.getProperty("entity")));
+                  o.getParticles().setValue(ParticlesMode.valueOf(p.getProperty("particles")));
+                  o.getGraphicsMode().setValue(GraphicsMode.valueOf(p.getProperty("graphics")));
+                  o.getCloudRenderMode().setValue(CloudRenderMode.valueOf(p.getProperty("clouds")));
+                  o.getEntityShadows().setValue(Boolean.parseBoolean(p.getProperty("shadows")));
+                  o.getBiomeBlendRadius().setValue(Integer.parseInt(p.getProperty("blend")));
+                  o.getMipmapLevels().setValue(Integer.parseInt(p.getProperty("mip")));
+                  o.getEnableVsync().setValue(Boolean.parseBoolean(p.getProperty("vsync")));
+                  o.getMaxFps().setValue(Integer.parseInt(p.getProperty("maxfps")));
+                  o.getBobView().setValue(Boolean.parseBoolean(p.getProperty("bob")));
+                  Files.deleteIfExists(backupFile());
+              }
+          }
+          LEGA_EOF
+          cat > 'src/main/java/dev/legavisual/LegaTheme.java' <<'LEGA_EOF'
+          package dev.legavisual;
+
+          import net.fabricmc.fabric.api.client.screen.v1.ScreenEvents;
+          import net.minecraft.client.MinecraftClient;
+          import net.minecraft.client.font.TextRenderer;
+          import net.minecraft.client.gui.DrawContext;
+          import net.minecraft.client.gui.screen.GameMenuScreen;
+          import net.minecraft.client.gui.screen.TitleScreen;
+
+          public final class LegaTheme {
+              private LegaTheme() {
+              }
+
+              public static void register() {
+                  ScreenEvents.AFTER_INIT.register((client, screen, w, h) -> {
+                      boolean title = screen instanceof TitleScreen;
+                      boolean pause = screen instanceof GameMenuScreen;
+                      if (title || pause) {
+                          ScreenEvents.afterRender(screen).register((s, ctx, mx, my, delta) -> {
+                              if (LegaConfig.themeScreens) {
+                                  draw(ctx, s.width, s.height, title);
+                              }
+                          });
+                      }
+                  });
+              }
+
+              private static void draw(DrawContext ctx, int w, int h, boolean title) {
+                  TextRenderer tr = MinecraftClient.getInstance().textRenderer;
+                  int acc = LegaConfig.accent();
+                  if (title) {
+                      ctx.fillGradient(0, 0, w, h, 0x448A4DFF, 0x55FF7AB8);
+                  }
+                  GuiUtil.roundRect(ctx, 10, 8, 18, 18, 5, acc);
+                  ctx.drawCenteredTextWithShadow(tr, "L", 19, 13, 0xFFFFFFFF);
+                  ctx.drawTextWithShadow(tr, "Lega Visual", 34, 9, 0xFFFFFFFF);
+                  ctx.drawTextWithShadow(tr, "Minecraft 1.21.4", 34, 19, 0xFFC8CCD8);
+                  if (title) {
+                      String v = "Lega Visual v1.0.0";
+                      GuiUtil.roundRect(ctx, w - tr.getWidth(v) - 30, h - 20, tr.getWidth(v) + 22, 16, 5, 0x55000000);
+                      GuiUtil.roundRect(ctx, w - tr.getWidth(v) - 26, h - 17, 10, 10, 3, acc);
+                      ctx.drawTextWithShadow(tr, v, w - tr.getWidth(v) - 12, h - 16, 0xFFFFFFFF);
+                  }
+              }
+          }
+          LEGA_EOF
+          cat > 'src/main/java/dev/legavisual/LegaVisualClient.java' <<'LEGA_EOF'
+          package dev.legavisual;
+
+          import net.fabricmc.api.ClientModInitializer;
+          import net.fabricmc.fabric.api.client.event.lifecycle.v1.ClientTickEvents;
+          import net.fabricmc.fabric.api.client.keybinding.v1.KeyBindingHelper;
+          import net.fabricmc.fabric.api.client.rendering.v1.HudRenderCallback;
+          import net.minecraft.client.MinecraftClient;
+          import net.minecraft.client.network.ClientPlayerEntity;
+          import net.minecraft.client.option.KeyBinding;
+          import net.minecraft.client.util.InputUtil;
+          import net.minecraft.entity.effect.StatusEffectInstance;
+          import net.minecraft.entity.effect.StatusEffects;
+          import org.lwjgl.glfw.GLFW;
+
+          public class LegaVisualClient implements ClientModInitializer {
+              public static KeyBinding MENU;
+              public static KeyBinding ZOOM;
+              public static KeyBinding FULLBRIGHT;
+
+              private static boolean addedNightVision;
+
+              @Override
+              public void onInitializeClient() {
+                  LegaConfig.load("legavisual");
+
+                  MENU = KeyBindingHelper.registerKeyBinding(new KeyBinding(
+                          "key.legavisual.menu", InputUtil.Type.KEYSYM, GLFW.GLFW_KEY_C, "category.legavisual"));
+                  ZOOM = KeyBindingHelper.registerKeyBinding(new KeyBinding(
+                          "key.legavisual.zoom", InputUtil.Type.KEYSYM, GLFW.GLFW_KEY_Z, "category.legavisual"));
+                  FULLBRIGHT = KeyBindingHelper.registerKeyBinding(new KeyBinding(
+                          "key.legavisual.fullbright", InputUtil.Type.KEYSYM, GLFW.GLFW_KEY_G, "category.legavisual"));
+
+                  LegaTheme.register();
+                  HudRenderCallback.EVENT.register(LegaHud::render);
+                  ClientTickEvents.END_CLIENT_TICK.register(LegaVisualClient::tick);
+              }
+
+              private static void tick(MinecraftClient mc) {
+                  while (MENU.wasPressed()) {
+                      mc.setScreen(new LegaScreen());
+                  }
+                  while (FULLBRIGHT.wasPressed()) {
+                      LegaConfig.fullbright = !LegaConfig.fullbright;
+                  }
+                  LegaConfig.zooming = ZOOM.isPressed() && mc.currentScreen == null;
+                  applyFullbright(mc);
+                  LegaPerf.autoTick(mc);
+                  LegaPerf.focusTick(mc);
+              }
+
+              private static void applyFullbright(MinecraftClient mc) {
+                  ClientPlayerEntity p = mc.player;
+                  if (p == null) {
+                      addedNightVision = false;
+                      return;
+                  }
+                  if (LegaConfig.fullbright) {
+                      StatusEffectInstance cur = p.getStatusEffect(StatusEffects.NIGHT_VISION);
+                      if (cur == null || cur.getDuration() < 400) {
+                          p.addStatusEffect(new StatusEffectInstance(StatusEffects.NIGHT_VISION, 100000, 0, false, false, false));
+                          addedNightVision = true;
+                      }
+                  } else if (addedNightVision) {
+                      p.removeStatusEffect(StatusEffects.NIGHT_VISION);
+                      addedNightVision = false;
+                  }
+              }
+          }
+          LEGA_EOF
+          cat > 'src/main/java/dev/legavisual/LegaScreen.java' <<'LEGA_EOF'
+          package dev.legavisual;
+
+          import net.minecraft.client.gui.DrawContext;
+          import net.minecraft.client.gui.screen.Screen;
+          import net.minecraft.client.util.math.MatrixStack;
+          import net.minecraft.text.Text;
+
+          import java.util.ArrayList;
+          import java.util.List;
+
+          public class LegaScreen extends Screen {
+              private static final String[] TABS = {"Home", "Modules", "Performance", "Settings", "Cosmetics", "Profiles", "About"};
+              private static final int SW = 100;
+
+              private static class Hit {
+                  final int x;
+                  final int y;
+                  final int w;
+                  final int h;
+                  final boolean content;
+                  final Runnable action;
+
+                  Hit(int x, int y, int w, int h, boolean content, Runnable action) {
+                      this.x = x;
+                      this.y = y;
+                      this.w = w;
+                      this.h = h;
+                      this.content = content;
+                      this.action = action;
+                  }
+              }
+
+              private final List<Hit> hits = new ArrayList<>();
+              private int tab = 0;
+              private int scroll = 0;
+              private int contentH = 0;
+              private int areaTop = 0;
+              private int areaBot = 0;
+              private String status = "Ready to play";
+
+              public LegaScreen() {
+                  super(Text.literal("Lega Visual"));
+              }
+
+              @Override
+              public boolean shouldPause() {
+                  return false;
+              }
+
+              @Override
+              public void removed() {
+                  LegaConfig.save("legavisual");
+              }
+
+              @Override
+              public boolean keyPressed(int keyCode, int scanCode, int modifiers) {
+                  if (LegaVisualClient.MENU != null && LegaVisualClient.MENU.matchesKey(keyCode, scanCode)) {
+                      close();
+                      return true;
+                  }
+                  return super.keyPressed(keyCode, scanCode, modifiers);
+              }
+
+              @Override
+              public boolean mouseClicked(double mx, double my, int button) {
+                  if (button == 0) {
+                      for (int i = hits.size() - 1; i >= 0; i--) {
+                          Hit h = hits.get(i);
+                          if (mx >= h.x && mx < h.x + h.w && my >= h.y && my < h.y + h.h) {
+                              if (h.content && (my < areaTop || my >= areaBot)) {
+                                  continue;
+                              }
+                              h.action.run();
+                              return true;
+                          }
+                      }
+                  }
+                  return super.mouseClicked(mx, my, button);
+              }
+
+              @Override
+              public boolean mouseScrolled(double mx, double my, double hAmount, double vAmount) {
+                  int max = Math.max(0, contentH - (areaBot - areaTop));
+                  scroll = Math.max(0, Math.min(max, scroll - (int) (vAmount * 12)));
+                  return true;
+              }
+
+              private static boolean inside(int mx, int my, int x, int y, int w, int h) {
+                  return mx >= x && mx < x + w && my >= y && my < y + h;
+              }
+
+              private boolean inClip(int my) {
+                  return my >= areaTop && my < areaBot;
+              }
+
+              private void addHit(int x, int y, int w, int h, boolean content, Runnable r) {
+                  hits.add(new Hit(x, y, w, h, content, r));
+              }
+
+              @Override
+              public void render(DrawContext c, int mx, int my, float delta) {
+                  super.render(c, mx, my, delta);
+                  hits.clear();
+                  int acc = LegaConfig.accent();
+                  int pw = Math.min(420, width - 16);
+                  int ph = Math.min(250, height - 16);
+                  int px = (width - pw) / 2;
+                  int py = (height - ph) / 2;
+
+                  GuiUtil.glass(c, px, py, pw, ph, 8);
+                  GuiUtil.roundRect(c, px + 4, py + 4, SW, ph - 8, 6, 0x22FFFFFF);
+
+                  GuiUtil.roundRect(c, px + 10, py + 10, 14, 14, 4, acc);
+                  c.drawCenteredTextWithShadow(textRenderer, "L", px + 17, py + 14, 0xFFFFFFFF);
+                  c.drawTextWithShadow(textRenderer, "Lega Visual", px + 29, py + 10, 0xFFFFFFFF);
+                  c.drawTextWithShadow(textRenderer, "1.21.4", px + 29, py + 19, 0xFF9AA0B0);
+
+                  for (int i = 0; i < TABS.length; i++) {
+                      int ty = py + 34 + i * 18;
+                      boolean hov = inside(mx, my, px + 8, ty, SW - 8, 16);
+                      if (i == tab) {
+                          GuiUtil.roundRect(c, px + 8, ty, SW - 8, 16, 5, 0x44FFFFFF);
+                          GuiUtil.roundRect(c, px + 8, ty + 3, 2, 10, 1, acc);
+                      } else if (hov) {
+                          GuiUtil.roundRect(c, px + 8, ty, SW - 8, 16, 5, 0x22FFFFFF);
+                      }
+                      c.drawTextWithShadow(textRenderer, TABS[i], px + 17, ty + 4, i == tab ? 0xFFFFFFFF : 0xFFC8CCD8);
+                      final int idx = i;
+                      addHit(px + 8, ty, SW - 8, 16, false, () -> {
+                          tab = idx;
+                          scroll = 0;
+                      });
+                  }
+
+                  GuiUtil.roundRect(c, px + 10, py + ph - 16, 5, 5, 2, 0xFF3DDC97);
+                  c.drawTextWithShadow(textRenderer, status, px + 19, py + ph - 18, 0xFF9AA0B0);
+
+                  int bx = px + SW + 14;
+                  int bw = pw - SW - 22;
+                  c.drawTextWithShadow(textRenderer, TABS[tab], bx, py + 10, 0xFFFFFFFF);
+                  areaTop = py + 24;
+                  areaBot = py + ph - 8;
+                  c.enableScissor(bx - 2, areaTop, bx + bw + 2, areaBot);
+                  int y = areaTop - scroll;
+                  switch (tab) {
+                      case 0 -> y = home(c, mx, my, bx, y, bw);
+                      case 1 -> y = modules(c, mx, my, bx, y, bw);
+                      case 2 -> y = performance(c, mx, my, bx, y, bw);
+                      case 3 -> y = settings(c, mx, my, bx, y, bw);
+                      case 4 -> y = cosmetics(c, bx, y, bw);
+                      case 5 -> y = profiles(c, mx, my, bx, y, bw);
+                      default -> y = about(c, bx, y);
+                  }
+                  contentH = y + scroll - areaTop;
+                  c.disableScissor();
+              }
+
+              private int home(DrawContext c, int mx, int my, int x, int y, int w) {
+                  int acc = LegaConfig.accent();
+                  GuiUtil.roundRect(c, x, y, w, 54, 6, (acc & 0x00FFFFFF) | 0x44000000);
+                  MatrixStack m = c.getMatrices();
+                  m.push();
+                  m.translate(x + 10, y + 11, 0);
+                  m.scale(1.4f, 1.4f, 1f);
+                  c.drawTextWithShadow(textRenderer, "Enhance your game", 0, 0, 0xFFFFFFFF);
+                  m.pop();
+                  c.drawTextWithShadow(textRenderer, "with style.", x + 10, y + 28, 0xFFD6DAE6);
+                  c.drawTextWithShadow(textRenderer, "Press C to open this menu", x + 10, y + 40, 0xFF9AA0B0);
+
+                  int cy = y + 62;
+                  String[] names = {"Settings", "Modules", "Cosmetics", "Profiles"};
+                  int[] target = {3, 1, 4, 5};
+                  int gap = 6;
+                  int cw = (w - gap * 3) / 4;
+                  for (int i = 0; i < 4; i++) {
+                      int cx = x + i * (cw + gap);
+                      boolean hov = inside(mx, my, cx, cy, cw, 44) && inClip(my);
+                      GuiUtil.roundRect(c, cx, cy, cw, 44, 6, hov ? 0x44FFFFFF : 0x22FFFFFF);
+                      GuiUtil.roundRect(c, cx + cw / 2 - 6, cy + 8, 12, 12, 6, acc);
+                      c.drawCenteredTextWithShadow(textRenderer, names[i], cx + cw / 2, cy + 27, 0xFFFFFFFF);
+                      final int t = target[i];
+                      addHit(cx, cy, cw, 44, true, () -> {
+                          tab = t;
+                          scroll = 0;
+                      });
+                  }
+                  return cy + 44 + 8;
+              }
+
+              private int toggleRow(DrawContext c, int mx, int my, int x, int y, int w, String label, boolean on, Runnable r) {
+                  boolean hov = inside(mx, my, x, y, w, 16) && inClip(my);
+                  GuiUtil.roundRect(c, x, y, w, 16, 5, hov ? 0x33FFFFFF : 0x1AFFFFFF);
+                  c.drawTextWithShadow(textRenderer, label, x + 8, y + 4, 0xFFFFFFFF);
+                  GuiUtil.toggle(c, x + w - 30, y + 3, on, LegaConfig.accent());
+                  addHit(x, y, w, 16, true, r);
+                  return y + 19;
+              }
+
+              private int modules(DrawContext c, int mx, int my, int x, int y, int w) {
+                  y = toggleRow(c, mx, my, x, y, w, "HUD overlay", LegaConfig.hud, () -> LegaConfig.hud = !LegaConfig.hud);
+                  y = toggleRow(c, mx, my, x, y, w, "Show FPS", LegaConfig.showFps, () -> LegaConfig.showFps = !LegaConfig.showFps);
+                  y = toggleRow(c, mx, my, x, y, w, "Show coordinates", LegaConfig.showCoords, () -> LegaConfig.showCoords = !LegaConfig.showCoords);
+                  y = toggleRow(c, mx, my, x, y, w, "Custom crosshair", LegaConfig.customCrosshair, () -> LegaConfig.customCrosshair = !LegaConfig.customCrosshair);
+                  y = toggleRow(c, mx, my, x, y, w, "Hide fire overlay", LegaConfig.hideFire, () -> LegaConfig.hideFire = !LegaConfig.hideFire);
+                  y = toggleRow(c, mx, my, x, y, w, "Glass buttons", LegaConfig.glassButtons, () -> LegaConfig.glassButtons = !LegaConfig.glassButtons);
+                  y = toggleRow(c, mx, my, x, y, w, "Themed main/pause menu", LegaConfig.themeScreens, () -> LegaConfig.themeScreens = !LegaConfig.themeScreens);
+                  y = toggleRow(c, mx, my, x, y, w, "Dynamic FPS (background)", LegaConfig.dynamicFps, () -> LegaConfig.dynamicFps = !LegaConfig.dynamicFps);
+                  y = toggleRow(c, mx, my, x, y, w, "Fullbright (G)", LegaConfig.fullbright, () -> LegaConfig.fullbright = !LegaConfig.fullbright);
+                  return y;
+              }
+
+              private int performance(DrawContext c, int mx, int my, int x, int y, int w) {
+                  int acc = LegaConfig.accent();
+                  String[] names = {"Off", "Balanced", "Extreme"};
+                  int gap = 6;
+                  int bw = (w - gap * 2) / 3;
+                  for (int i = 0; i < 3; i++) {
+                      int bx = x + i * (bw + gap);
+                      boolean sel = LegaConfig.perfLevel == i;
+                      boolean hov = inside(mx, my, bx, y, bw, 26) && inClip(my);
+                      int fill = sel ? ((acc & 0x00FFFFFF) | 0x88000000) : (hov ? 0x44FFFFFF : 0x22FFFFFF);
+                      GuiUtil.roundRect(c, bx, y, bw, 26, 6, fill);
+                      c.drawCenteredTextWithShadow(textRenderer, names[i], bx + bw / 2, y + 9, 0xFFFFFFFF);
+                      final int n = i;
+                      addHit(bx, y, bw, 26, true, () -> {
+                          boolean ok = LegaPerf.apply(n);
+                          status = ok ? "Performance: " + names[n] : "Could not apply";
+                      });
+                  }
+                  y += 32;
+                  y = stepper(c, mx, my, x, y, w, "Auto FPS target", LegaConfig.autoFps == 0 ? "Off" : String.valueOf(LegaConfig.autoFps),
+                          () -> LegaPerf.setAuto(LegaConfig.cycleAuto(-1)),
+                          () -> LegaPerf.setAuto(LegaConfig.cycleAuto(1)));
+                  y += 4;
+                  String[] lines = {
+                          "Balanced: view 10, fast graphics,",
+                          "fewer particles, no clouds/shadows.",
+                          "Extreme: view 6, sim 5, minimal",
+                          "particles, no biome blend/mipmaps,",
+                          "unlimited FPS, no vsync, no bobbing.",
+                          "Off restores your old video settings.",
+                          "Auto: if FPS is below target, view",
+                          "distance drops by 1 (min 4); if far",
+                          "above it, it grows back (max 12).",
+                          "Sodium + Lithium give a bigger boost."
+                  };
+                  for (String s : lines) {
+                      c.drawTextWithShadow(textRenderer, s, x + 2, y, 0xFFC8CCD8);
+                      y += 11;
+                  }
+                  return y + 4;
+              }
+
+              private int stepper(DrawContext c, int mx, int my, int x, int y, int w, String label, String value, Runnable minus, Runnable plus) {
+                  GuiUtil.roundRect(c, x, y, w, 18, 5, 0x1AFFFFFF);
+                  c.drawTextWithShadow(textRenderer, label, x + 8, y + 5, 0xFFFFFFFF);
+                  int plusX = x + w - 22;
+                  int minusX = plusX - 38;
+                  GuiUtil.button(c, textRenderer, "-", minusX, y + 3, 14, 12, inside(mx, my, minusX, y + 3, 14, 12) && inClip(my));
+                  GuiUtil.button(c, textRenderer, "+", plusX, y + 3, 14, 12, inside(mx, my, plusX, y + 3, 14, 12) && inClip(my));
+                  c.drawCenteredTextWithShadow(textRenderer, value, (minusX + 14 + plusX) / 2, y + 5, 0xFFFFFFFF);
+                  addHit(minusX, y + 3, 14, 12, true, minus);
+                  addHit(plusX, y + 3, 14, 12, true, plus);
+                  return y + 21;
+              }
+
+              private int settings(DrawContext c, int mx, int my, int x, int y, int w) {
+                  y = stepper(c, mx, my, x, y, w, "Zoom strength (Z)", LegaConfig.zoomLevel + "x",
+                          () -> LegaConfig.zoomLevel = Math.max(2, LegaConfig.zoomLevel - 1),
+                          () -> LegaConfig.zoomLevel = Math.min(8, LegaConfig.zoomLevel + 1));
+                  y = stepper(c, mx, my, x, y, w, "Crosshair size", String.valueOf(LegaConfig.crosshairSize),
+                          () -> LegaConfig.crosshairSize = Math.max(2, LegaConfig.crosshairSize - 1),
+                          () -> LegaConfig.crosshairSize = Math.min(12, LegaConfig.crosshairSize + 1));
+
+                  GuiUtil.roundRect(c, x, y, w, 20, 5, 0x1AFFFFFF);
+                  c.drawTextWithShadow(textRenderer, "Accent color", x + 8, y + 6, 0xFFFFFFFF);
+                  int n = LegaConfig.PALETTE.length;
+                  int sx = x + w - 8 - n * 18 + 6;
+                  for (int i = 0; i < n; i++) {
+                      int cx = sx + i * 18;
+                      if (i == LegaConfig.accent) {
+                          GuiUtil.roundRect(c, cx - 2, y + 2, 16, 16, 8, 0xFFFFFFFF);
+                      }
+                      GuiUtil.roundRect(c, cx, y + 4, 12, 12, 6, LegaConfig.PALETTE[i]);
+                      final int idx = i;
+                      addHit(cx - 2, y + 2, 16, 16, true, () -> LegaConfig.accent = idx);
+                  }
+                  return y + 23;
+              }
+
+              private int cosmetics(DrawContext c, int x, int y, int w) {
+                  GuiUtil.roundRect(c, x, y, w, 40, 6, 0x22FFFFFF);
+                  c.drawTextWithShadow(textRenderer, "Coming soon", x + 10, y + 9, LegaConfig.accent());
+                  c.drawTextWithShadow(textRenderer, "Capes and effects are planned.", x + 10, y + 22, 0xFF9AA0B0);
+                  return y + 46;
+              }
+
+              private int profiles(DrawContext c, int mx, int my, int x, int y, int w) {
+                  for (int i = 1; i <= 3; i++) {
+                      final int n = i;
+                      GuiUtil.roundRect(c, x, y, w, 20, 5, 0x1AFFFFFF);
+                      c.drawTextWithShadow(textRenderer, "Profile " + n, x + 8, y + 6, 0xFFFFFFFF);
+                      int loadX = x + w - 8 - 40;
+                      int saveX = loadX - 6 - 40;
+                      GuiUtil.button(c, textRenderer, "Save", saveX, y + 4, 40, 12, inside(mx, my, saveX, y + 4, 40, 12) && inClip(my));
+                      GuiUtil.button(c, textRenderer, "Load", loadX, y + 4, 40, 12, inside(mx, my, loadX, y + 4, 40, 12) && inClip(my));
+                      addHit(saveX, y + 4, 40, 12, true, () -> {
+                          LegaConfig.save("legavisual-profile-" + n);
+                          status = "Saved profile " + n;
+                      });
+                      addHit(loadX, y + 4, 40, 12, true, () -> {
+                          boolean ok = LegaConfig.load("legavisual-profile-" + n);
+                          status = ok ? "Loaded profile " + n : "Profile " + n + " is empty";
+                      });
+                      y += 23;
+                  }
+                  return y;
+              }
+
+              private int about(DrawContext c, int x, int y) {
+                  String[] lines = {
+                          "Lega Visual 1.0.0",
+                          "Visual client mod for Minecraft 1.21.4",
+                          "",
+                          "C - open menu",
+                          "Z (hold) - zoom",
+                          "G - toggle fullbright",
+                          "Change keys in Options > Controls"
+                  };
+                  for (int i = 0; i < lines.length; i++) {
+                      c.drawTextWithShadow(textRenderer, lines[i], x + 2, y, i == 0 ? LegaConfig.accent() : 0xFFD6DAE6);
+                      y += 12;
+                  }
+                  return y;
+              }
+          }
+          LEGA_EOF
+          cat > 'src/main/java/dev/legavisual/mixin/GameRendererMixin.java' <<'LEGA_EOF'
+          package dev.legavisual.mixin;
+
+          import dev.legavisual.LegaConfig;
+          import net.minecraft.client.render.GameRenderer;
+          import org.spongepowered.asm.mixin.Mixin;
+          import org.spongepowered.asm.mixin.injection.At;
+          import org.spongepowered.asm.mixin.injection.Inject;
+          import org.spongepowered.asm.mixin.injection.callback.CallbackInfoReturnable;
+
+          @Mixin(GameRenderer.class)
+          public class GameRendererMixin {
+              @Inject(method = "getFov", at = @At("RETURN"), cancellable = true, require = 0)
+              private void legavisual$zoom(CallbackInfoReturnable<Double> cir) {
+                  float target = LegaConfig.zooming ? (float) LegaConfig.zoomLevel : 1.0f;
+                  LegaConfig.zoomCurrent += (target - LegaConfig.zoomCurrent) * 0.35f;
+                  if (Math.abs(target - LegaConfig.zoomCurrent) < 0.01f) {
+                      LegaConfig.zoomCurrent = target;
+                  }
+                  if (LegaConfig.zoomCurrent > 1.001f) {
+                      cir.setReturnValue(cir.getReturnValue() / LegaConfig.zoomCurrent);
+                  }
+              }
+          }
+          LEGA_EOF
+          cat > 'src/main/java/dev/legavisual/mixin/InGameHudMixin.java' <<'LEGA_EOF'
+          package dev.legavisual.mixin;
+
+          import dev.legavisual.LegaConfig;
+          import net.minecraft.client.gui.hud.InGameHud;
+          import org.spongepowered.asm.mixin.Mixin;
+          import org.spongepowered.asm.mixin.injection.At;
+          import org.spongepowered.asm.mixin.injection.Inject;
+          import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
+
+          @Mixin(InGameHud.class)
+          public class InGameHudMixin {
+              @Inject(method = "renderCrosshair", at = @At("HEAD"), cancellable = true, require = 0)
+              private void legavisual$crosshair(CallbackInfo ci) {
+                  if (LegaConfig.customCrosshair) {
+                      ci.cancel();
+                  }
+              }
+          }
+          LEGA_EOF
+          cat > 'src/main/java/dev/legavisual/mixin/InGameOverlayRendererMixin.java' <<'LEGA_EOF'
+          package dev.legavisual.mixin;
+
+          import dev.legavisual.LegaConfig;
+          import net.minecraft.client.gui.hud.InGameOverlayRenderer;
+          import org.spongepowered.asm.mixin.Mixin;
+          import org.spongepowered.asm.mixin.injection.At;
+          import org.spongepowered.asm.mixin.injection.Inject;
+          import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
+
+          @Mixin(InGameOverlayRenderer.class)
+          public class InGameOverlayRendererMixin {
+              @Inject(method = "renderFireOverlay", at = @At("HEAD"), cancellable = true, require = 0)
+              private static void legavisual$fire(CallbackInfo ci) {
+                  if (LegaConfig.hideFire) {
+                      ci.cancel();
+                  }
+              }
+          }
+          LEGA_EOF
+          cat > 'src/main/java/dev/legavisual/mixin/PressableWidgetMixin.java' <<'LEGA_EOF'
+          package dev.legavisual.mixin;
+
+          import dev.legavisual.GuiUtil;
+          import dev.legavisual.LegaConfig;
+          import net.minecraft.client.MinecraftClient;
+          import net.minecraft.client.gui.DrawContext;
+          import net.minecraft.client.gui.widget.PressableWidget;
+          import org.spongepowered.asm.mixin.Mixin;
+          import org.spongepowered.asm.mixin.injection.At;
+          import org.spongepowered.asm.mixin.injection.Inject;
+          import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
+
+          @Mixin(PressableWidget.class)
+          public abstract class PressableWidgetMixin {
+              @Inject(method = "renderWidget", at = @At("HEAD"), cancellable = true, require = 0)
+              private void legavisual$glass(DrawContext ctx, int mouseX, int mouseY, float delta, CallbackInfo ci) {
+                  if (!LegaConfig.glassButtons) {
+                      return;
+                  }
+                  PressableWidget w = (PressableWidget) (Object) this;
+                  int x = w.getX();
+                  int y = w.getY();
+                  int ww = w.getWidth();
+                  int h = w.getHeight();
+                  boolean hov = w.isHovered() && w.active;
+                  int tint = LegaConfig.accent() & 0x00FFFFFF;
+                  GuiUtil.roundRect(ctx, x, y, ww, h, 5, hov ? (0xDD000000 | tint) : (0x66000000 | tint));
+                  GuiUtil.roundRect(ctx, x + 1, y + 1, ww - 2, h - 2, 4, hov ? 0xCC2E2256 : 0xAA1C1636);
+                  ctx.fill(x + 5, y + 1, x + ww - 5, y + 2, 0x44FFFFFF);
+                  ctx.drawCenteredTextWithShadow(MinecraftClient.getInstance().textRenderer, w.getMessage(),
+                          x + ww / 2, y + (h - 8) / 2, w.active ? 0xFFFFFFFF : 0xFF8A8AA0);
+                  ci.cancel();
+              }
+          }
+          LEGA_EOF
+      - run: gradle build
+      - uses: actions/upload-artifact@v4
+        with:
+          name: legavisual-jar
+          path: build/libs/legavisual-*.jar
